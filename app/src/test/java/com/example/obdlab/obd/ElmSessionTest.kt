@@ -1,25 +1,38 @@
 package com.example.obdlab.obd
 
-import kotlinx.coroutines.runBlocking
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.EmptyCoroutineContext
+import kotlin.coroutines.Result
+import kotlin.coroutines.startCoroutine
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ElmSessionTest {
     @Test
-    fun readsFragmentedResponseUntilPrompt() = runBlocking {
+    fun readsFragmentedResponseUntilPrompt() {
         val fake = FakeTransport(listOf("ELM327 ", "v1.3a\r\r", ">"))
-        val response = ElmSession(fake).command("ATI")
+        val response = immediate { ElmSession(fake).command("ATI") }
         assertEquals("ELM327 v1.3a\r\r", response)
         assertEquals("ATI\r", fake.written)
     }
 
     @Test
-    fun rejectsMultilineCommands() = runBlocking {
+    fun rejectsMultilineCommands() {
         val fake = FakeTransport(emptyList())
         assertThrows(IllegalArgumentException::class.java) {
-            runBlocking { ElmSession(fake).command("ATI\rSTI") }
+            immediate { ElmSession(fake).command("ATI\rSTI") }
         }
+    }
+
+    /** Test-only runner: fake operations never suspend. */
+    private fun <T> immediate(block: suspend () -> T): T {
+        var result: Result<T>? = null
+        block.startCoroutine(object : Continuation<T> {
+            override val context = EmptyCoroutineContext
+            override fun resumeWith(value: Result<T>) { result = value }
+        })
+        return checkNotNull(result).getOrThrow()
     }
 
     private class FakeTransport(chunks: List<String>) : ObdTransport {

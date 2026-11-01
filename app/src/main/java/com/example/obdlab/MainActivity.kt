@@ -12,6 +12,7 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -130,7 +131,7 @@ private fun UsbTerminal(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("OBD Lab — USB terminal", style = MaterialTheme.typography.headlineSmall)

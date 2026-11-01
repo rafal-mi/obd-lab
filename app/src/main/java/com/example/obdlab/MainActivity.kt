@@ -19,6 +19,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.obdlab.obd.EngineRpm
 import com.example.obdlab.obd.ElmSession
 import com.example.obdlab.obd.UsbObdTransport
 import com.example.obdlab.ui.theme.OBDLabTheme
@@ -103,6 +104,7 @@ private fun UsbTerminal(
     var busy by remember { mutableStateOf(false) }
     var log by remember { mutableStateOf("Connect a USB OBD adapter, then tap Refresh.\n") }
     var customCommand by remember { mutableStateOf("ATI") }
+    var rpm by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(permissionDevice) {
@@ -113,8 +115,13 @@ private fun UsbTerminal(
         try {
             candidate.connect()
             transport = candidate
-            session = ElmSession(candidate)
+            val newSession = ElmSession(candidate)
+            session = newSession
             log += "Connected to USB device ${device.deviceName} at 38400 baud\n"
+            for (cmd in listOf("ATE0", "ATI", "STI", "ATDPN")) {
+                val result = newSession.command(cmd)
+                log += "> $cmd\n${result.trim()}\n"
+            }
         } catch (error: Exception) {
             log += "Connect failed: ${error.message}\n"
             runCatching { candidate.disconnect() }
@@ -170,6 +177,24 @@ private fun UsbTerminal(
                 }) { Text(cmd) }
             }
         }
+        Button(enabled = session != null && !busy, onClick = {
+            val current = session ?: return@Button
+            scope.launch {
+                busy = true
+                rpm = null
+                try {
+                    val result = current.command("010C")
+                    log += "> 010C\n${result.trim()}\n"
+                    rpm = EngineRpm.decode(result)
+                    if (rpm == null) log += "No valid engine RPM response (41 0C A B). Check ignition and vehicle connection.\n"
+                } catch (error: Exception) {
+                    log += "010C failed: ${error.message}\n"
+                } finally {
+                    busy = false
+                }
+            }
+        }) { Text("Read engine RPM (010C)") }
+        if (rpm != null) Text("Engine speed: $rpm RPM", style = MaterialTheme.typography.titleMedium)
         OutlinedTextField(
             value = customCommand,
             onValueChange = { customCommand = it },
@@ -197,6 +222,7 @@ private fun UsbTerminal(
                         log += "Disconnected\n"
                     } finally {
                         session = null
+                        rpm = null
                         transport = null
                         busy = false
                     }

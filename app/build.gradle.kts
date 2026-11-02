@@ -37,6 +37,7 @@ android {
 }
 
 dependencies {
+    implementation("com.github.mik3y:usb-serial-for-android:3.9.0")
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)

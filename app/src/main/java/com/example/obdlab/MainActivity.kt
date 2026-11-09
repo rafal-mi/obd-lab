@@ -1,6 +1,10 @@
 package com.example.obdlab
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.app.PendingIntent
+import android.bluetooth.BluetoothManager
+import android.content.pm.PackageManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -10,6 +14,10 @@ import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
+import androidx.compose.ui.platform.LocalContext
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
@@ -19,6 +27,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import com.example.obdlab.obd.BluetoothObdTransport
+import com.example.obdlab.obd.ObdTransport
 import com.example.obdlab.obd.EngineRpm
 import com.example.obdlab.obd.ElmSession
 import com.example.obdlab.obd.UsbObdTransport
@@ -59,7 +69,7 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             OBDLabTheme {
-                UsbTerminal(
+                ObdTerminal(
                     devices = usbManager.deviceList.values.toList(),
                     permissionDevice = permissionResult,
                     permissionMessage = permissionMessage,
@@ -89,7 +99,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun UsbTerminal(
+private fun ObdTerminal(
     devices: List<UsbDevice>,
     permissionDevice: UsbDevice?,
     permissionMessage: String?,
@@ -100,12 +110,36 @@ private fun UsbTerminal(
     var available by remember { mutableStateOf(devices) }
     var selected by remember { mutableStateOf<UsbDevice?>(null) }
     var session by remember { mutableStateOf<ElmSession?>(null) }
-    var transport by remember { mutableStateOf<UsbObdTransport?>(null) }
+    var transport by remember { mutableStateOf<ObdTransport?>(null) }
     var busy by remember { mutableStateOf(false) }
-    var log by remember { mutableStateOf("Connect a USB OBD adapter, then tap Refresh.\n") }
+    var log by remember { mutableStateOf("Connect a USB or paired Bluetooth OBD adapter.\n") }
     var customCommand by remember { mutableStateOf("ATI") }
     var rpm by remember { mutableStateOf<Int?>(null) }
     val scope = rememberCoroutineScope()
+
+    val context = LocalContext.current
+    val btManager = remember { context.getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager }
+    var paired by remember { mutableStateOf(emptyList<android.bluetooth.BluetoothDevice>()) }
+    var btMessage by remember { mutableStateOf("") }
+    var connectionLabel by remember { mutableStateOf("Disconnected") }
+
+    @SuppressLint("MissingPermission")
+    fun refreshBluetooth() {
+        if (Build.VERSION.SDK_INT >= 31 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            btMessage = "Bluetooth permission required"
+            return
+        }
+        val adapter = btManager.adapter
+        paired = if (adapter?.isEnabled == true) adapter.bondedDevices.orEmpty().toList() else emptyList()
+        btMessage = if (adapter == null) "Bluetooth unavailable"
+                    else if (!adapter.isEnabled) "Enable Bluetooth in Android settings"
+                    else if (paired.isEmpty()) "No paired Bluetooth devices" else ""
+    }
+    val permissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        if (it) refreshBluetooth() else btMessage = "Bluetooth permission denied"
+    }
+
 
     LaunchedEffect(permissionDevice) {
         val device = permissionDevice ?: return@LaunchedEffect
@@ -114,14 +148,15 @@ private fun UsbTerminal(
         val candidate = createTransport(device)
         try {
             candidate.connect()
-            transport = candidate
             val newSession = ElmSession(candidate)
-            session = newSession
             log += "Connected to USB device ${device.deviceName} at 38400 baud\n"
             for (cmd in listOf("ATE0", "ATI", "STI", "ATDPN")) {
                 val result = newSession.command(cmd)
                 log += "> $cmd\n${result.trim()}\n"
             }
+            transport = candidate
+            session = newSession
+            connectionLabel = "USB connected"
         } catch (error: Exception) {
             log += "Connect failed: ${error.message}\n"
             runCatching { candidate.disconnect() }
@@ -141,7 +176,8 @@ private fun UsbTerminal(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("OBD Lab — USB terminal", style = MaterialTheme.typography.headlineSmall)
+        Text("OBD Lab — diagnostic terminal", style = MaterialTheme.typography.headlineSmall)
+        Text("USB", style = MaterialTheme.typography.titleMedium)
         Button(onClick = { available = refresh() }, enabled = !busy) {
             Text("Refresh USB devices")
         }
@@ -158,7 +194,42 @@ private fun UsbTerminal(
             }
         }
         if (permissionMessage != null) Text(permissionMessage)
-        Text(if (session == null) "Disconnected" else "Connected")
+
+        Text("Bluetooth Classic", style = MaterialTheme.typography.titleMedium)
+        OutlinedButton(enabled = !busy, onClick = {
+            if (Build.VERSION.SDK_INT >= 31 &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
+                permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            else refreshBluetooth()
+        }) { Text("Show paired Bluetooth devices") }
+        if (btMessage.isNotEmpty()) Text(btMessage)
+        paired.forEach { device ->
+            @SuppressLint("MissingPermission")
+            val label = (device.name ?: "Unnamed") + " (" + device.address + ")"
+            OutlinedButton(enabled = session == null && !busy, onClick = {
+                scope.launch {
+                    busy = true
+                    val candidate = BluetoothObdTransport(device)
+                    try {
+                        candidate.connect()
+                        val newSession = ElmSession(candidate)
+                        log += "Bluetooth connected: " + label + "\\n"
+                        for (cmd in listOf("ATE0", "ATI", "ATDPN")) {
+                            val response = newSession.command(cmd)
+                            log += "> " + cmd + "\\n" + response.trim() + "\\n"
+                        }
+                        transport = candidate
+                        session = newSession
+                        connectionLabel = "Bluetooth: " + label
+                    } catch (error: Exception) {
+                        log += "Bluetooth failed: " + error.message + "\\n"
+                        runCatching { candidate.disconnect() }
+                    } finally { busy = false }
+                }
+            }) { Text("Connect " + label) }
+        }
+        Text(connectionLabel)
+
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("ATI", "STI", "ATDPN").forEach { cmd ->
                 Button(enabled = session != null && !busy, onClick = {
@@ -224,6 +295,7 @@ private fun UsbTerminal(
                         session = null
                         rpm = null
                         transport = null
+                        connectionLabel = "Disconnected"
                         busy = false
                     }
                 }

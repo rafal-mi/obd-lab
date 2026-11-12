@@ -23,8 +23,10 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -176,16 +178,16 @@ private fun ObdTerminal(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding().padding(12.dp),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).windowInsetsPadding(WindowInsets.safeDrawing).imePadding().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Text("OBD Lab — diagnostic terminal", style = MaterialTheme.typography.headlineSmall)
-        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("USB", style = MaterialTheme.typography.titleMedium)
+        Text("OBD Lab — diagnostic terminal", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.headlineSmall)
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("USB", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium)
         Button(onClick = { available = refresh() }, enabled = !busy) {
             Text("Refresh USB devices")
         }
-        if (available.isEmpty()) Text("No USB devices detected")
+        if (available.isEmpty()) Text("No USB devices detected", color = MaterialTheme.colorScheme.onBackground)
         available.forEach { device ->
             OutlinedButton(
                 onClick = {
@@ -197,16 +199,16 @@ private fun ObdTerminal(
                 Text("Connect ${device.vendorId.toString(16)}:${device.productId.toString(16)} — ${device.deviceName}")
             }
         }
-        if (permissionMessage != null) Text(permissionMessage)
+        if (permissionMessage != null) Text(permissionMessage, color = MaterialTheme.colorScheme.onBackground)
 
-        Text("Bluetooth Classic", style = MaterialTheme.typography.titleMedium)
+        Text("Bluetooth Classic", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium)
         OutlinedButton(enabled = !busy, onClick = {
             if (Build.VERSION.SDK_INT >= 31 &&
                 ContextCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED)
                 permissionLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
             else refreshBluetooth()
         }) { Text("Show paired Bluetooth devices") }
-        if (btMessage.isNotEmpty()) Text(btMessage)
+        if (btMessage.isNotEmpty()) Text(btMessage, color = MaterialTheme.colorScheme.onBackground)
         paired.forEach { device ->
             @SuppressLint("MissingPermission")
             val label = (device.name ?: "Unnamed") + " (" + device.address + ")"
@@ -232,7 +234,7 @@ private fun ObdTerminal(
                 }
             }) { Text("Connect " + label) }
         }
-        Text(connectionLabel)
+        Text(connectionLabel, color = MaterialTheme.colorScheme.onBackground)
 
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             listOf("ATI", "STI", "ATDPN").forEach { cmd ->
@@ -269,12 +271,12 @@ private fun ObdTerminal(
                 }
             }
         }) { Text("Read engine RPM (010C)") }
-        if (rpm != null) Text("Engine speed: $rpm RPM", style = MaterialTheme.typography.titleMedium)
+        if (rpm != null) Text("Engine speed: $rpm RPM", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium)
         }
-        Text("Responses", style = MaterialTheme.typography.titleMedium)
+        Text("Responses", color = MaterialTheme.colorScheme.onBackground, style = MaterialTheme.typography.titleMedium)
         val responseScroll = rememberScrollState()
         LaunchedEffect(log) { responseScroll.animateScrollTo(responseScroll.maxValue) }
-        Text(log, modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(responseScroll), style = MaterialTheme.typography.bodySmall)
+        Text(log, color = MaterialTheme.colorScheme.onBackground, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp, max = 200.dp).verticalScroll(responseScroll), style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(
             value = customCommand,
             onValueChange = { customCommand = it },

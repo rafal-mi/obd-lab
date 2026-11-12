@@ -23,6 +23,9 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -173,10 +176,11 @@ private fun ObdTerminal(
     }
 
     Column(
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).padding(16.dp),
+        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).imePadding().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         Text("OBD Lab — diagnostic terminal", style = MaterialTheme.typography.headlineSmall)
+        Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("USB", style = MaterialTheme.typography.titleMedium)
         Button(onClick = { available = refresh() }, enabled = !busy) {
             Text("Refresh USB devices")
@@ -213,16 +217,16 @@ private fun ObdTerminal(
                     try {
                         candidate.connect()
                         val newSession = ElmSession(candidate)
-                        log += "Bluetooth connected: " + label + "\\n"
+                        log += "Bluetooth connected: " + label + "\n"
                         for (cmd in listOf("ATE0", "ATI", "ATDPN")) {
                             val response = newSession.command(cmd)
-                            log += "> " + cmd + "\\n" + response.trim() + "\\n"
+                            log += "> " + cmd + "\n" + response.trim() + "\n"
                         }
                         transport = candidate
                         session = newSession
                         connectionLabel = "Bluetooth: " + label
                     } catch (error: Exception) {
-                        log += "Bluetooth failed: " + error.message + "\\n"
+                        log += "Bluetooth failed: " + error.message + "\n"
                         runCatching { candidate.disconnect() }
                     } finally { busy = false }
                 }
@@ -266,11 +270,17 @@ private fun ObdTerminal(
             }
         }) { Text("Read engine RPM (010C)") }
         if (rpm != null) Text("Engine speed: $rpm RPM", style = MaterialTheme.typography.titleMedium)
+        }
+        Text("Responses", style = MaterialTheme.typography.titleMedium)
+        val responseScroll = rememberScrollState()
+        LaunchedEffect(log) { responseScroll.animateScrollTo(responseScroll.maxValue) }
+        Text(log, modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(responseScroll), style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(
             value = customCommand,
             onValueChange = { customCommand = it },
             label = { Text("Adapter command") },
             singleLine = true,
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth()
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -301,11 +311,6 @@ private fun ObdTerminal(
                 }
             }) { Text("Disconnect") }
         }
-        Text("Responses", style = MaterialTheme.typography.titleMedium)
-        Text(
-            log,
-            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
-            style = MaterialTheme.typography.bodySmall
-        )
+
     }
 }

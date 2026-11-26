@@ -139,6 +139,7 @@ private fun ObdTerminal(
     var paired by remember { mutableStateOf(emptyList<android.bluetooth.BluetoothDevice>()) }
     var btMessage by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var acceleratorScreen by remember { mutableStateOf(false) }
     var transport by remember { mutableStateOf<ObdTransport?>(null) }
     var session by remember { mutableStateOf<ElmSession?>(null) }
     var deviceTitle by remember { mutableStateOf("") }
@@ -240,6 +241,22 @@ private fun ObdTerminal(
         }
     }
 
+    if (acceleratorScreen && session != null) {
+        AcceleratorDiagnosticsScreen(
+            session = checkNotNull(session),
+            onBack = { acceleratorScreen = false },
+            onConnectionLost = {
+                val previous = transport
+                transport = null
+                session = null
+                acceleratorScreen = false
+                record("error", "Diagnostic session interrupted; reconnect before sending commands")
+                scope.launch { runCatching { previous?.disconnect() } }
+            }
+        )
+        return
+    }
+
     Column(
         modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             .windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp),
@@ -300,6 +317,7 @@ private fun ObdTerminal(
                     }
                 }) { Text("Back to devices") }
             }
+            Button(enabled = session != null && !busy, onClick = { acceleratorScreen = true }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
             HorizontalDivider()
             val listState = rememberLazyListState()
             LaunchedEffect(entries.size) {

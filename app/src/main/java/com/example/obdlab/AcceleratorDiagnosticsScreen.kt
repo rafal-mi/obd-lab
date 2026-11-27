@@ -5,14 +5,12 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.SystemClock
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.example.obdlab.obd.*
@@ -20,6 +18,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
+import androidx.compose.ui.graphics.Color
+import com.example.obdlab.ui.chart.*
 
 @Composable
 fun AcceleratorDiagnosticsScreen(
@@ -130,24 +130,39 @@ fun AcceleratorDiagnosticsScreen(
             modifier = Modifier.fillMaxWidth().height(56.dp)
         ) { Text(if (stopRequested && running) "Stopping after current request…" else "Stop") }
         Text("Samples: ${samples.size}")
-        for (pid in selected) {
+        val elapsed = samples.lastOrNull()?.elapsedMs ?: 0L
+        Text("Elapsed: %.1f s".format(Locale.ROOT, elapsed / 1000.0))
+        val colors = listOf(Color(0xFF42A5F5), Color(0xFFFFB74D), Color(0xFFAB47BC), Color(0xFF26A69A))
+        val chartSeries = selected.map { pid ->
             val series = samples.filter { it.pid == pid }
-            val latest = series.lastOrNull()?.percent
-            Text("${pid.label} (PID ${pid.hex}): " +
-                (latest?.let { "%.1f%%".format(Locale.ROOT, it) } ?: "No valid response"))
-            val color = MaterialTheme.colorScheme.primary
-            val window = series.takeLast(120)
-            Canvas(Modifier.fillMaxWidth().height(90.dp)) {
-                val min = window.firstOrNull()?.elapsedMs ?: 0L
-                val span = ((window.lastOrNull()?.elapsedMs ?: min) - min).coerceAtLeast(1)
-                for ((a, b) in window.zipWithNext()) {
-                    val y1 = a.percent ?: continue
-                    val y2 = b.percent ?: continue
-                    drawLine(color,
-                        Offset(size.width * ((a.elapsedMs - min).toFloat() / span), size.height * (1f - y1.toFloat() / 100f)),
-                        Offset(size.width * ((b.elapsedMs - min).toFloat() / span), size.height * (1f - y2.toFloat() / 100f)),
-                        strokeWidth = 2.dp.toPx())
+            ChartSeries(pid.label + " (" + pid.hex + ")", colors[pid.ordinal],
+                series.map { ChartPoint(it.elapsedMs, it.percent) })
+        }
+        if (selected.isNotEmpty()) {
+            Text("Live readings", style = MaterialTheme.typography.titleMedium)
+            for (pid in selected) {
+                val series = samples.filter { it.pid == pid }
+                val stats = SeriesStats.from(series.map { ChartPoint(it.elapsedMs, it.percent) })
+                val latest = series.lastOrNull()
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(pid.label + " (PID " + pid.hex + ")", style = MaterialTheme.typography.titleMedium)
+                        Text(latest?.percent?.let { "%.1f%%".format(Locale.ROOT, it) } ?: "—",
+                            style = MaterialTheme.typography.headlineMedium)
+                        Text("Raw: " + (latest?.value?.let { "%d / 0x%02X".format(Locale.ROOT, it, it) } ?: "—"))
+                        Text("Min: " + formatPercent(stats.min) + "   Max: " + formatPercent(stats.max))
+                        Text("Rate: " + (stats.rateHz?.let { "%.1f Hz".format(Locale.ROOT, it) } ?: "—") +
+                            "   Valid: ${stats.validCount}/${series.size}")
+                    }
                 }
+            }
+            Text("Combined signals", style = MaterialTheme.typography.titleMedium)
+            Text("All channels share the same time and percentage axes. Latest 20 seconds.")
+            val window = ChartWindow.trailing(elapsed, 20_000)
+            TimeSeriesChart(chartSeries, window, 0.0, 100.0, "%", Modifier.fillMaxWidth())
+            for (series in chartSeries) {
+                Text(series.label, style = MaterialTheme.typography.titleSmall)
+                TimeSeriesChart(listOf(series), window, 0.0, 100.0, "%", Modifier.fillMaxWidth())
             }
         }
         OutlinedButton(enabled = !running && samples.isNotEmpty(), onClick = {
@@ -172,3 +187,5 @@ class AcceleratorRecordingState {
     val samples = mutableStateListOf<DiagnosticSample>()
     val transcript = mutableStateListOf<String>()
 }
+
+private fun formatPercent(value: Double?): String = value?.let { "%.1f%%".format(Locale.ROOT, it) } ?: "—"

@@ -41,10 +41,13 @@ import androidx.compose.ui.unit.dp
 import com.example.obdlab.obd.BluetoothObdTransport
 import com.example.obdlab.obd.ObdTransport
 import com.example.obdlab.obd.EngineRpm
-import com.example.obdlab.obd.ElmSession
 import com.example.obdlab.obd.UsbObdTransport
 import com.example.obdlab.ui.theme.OBDLabTheme
 import kotlinx.coroutines.launch
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.verticalScroll
+import com.example.obdlab.obd.DiagnosticSessionManager
+import com.example.obdlab.obd.SimulationTransport
 import android.content.ClipData
 import android.content.ClipboardManager
 import androidx.compose.ui.text.font.FontFamily
@@ -58,6 +61,8 @@ import java.util.Locale
 private const val USB_PERMISSION_ACTION = "com.example.obdlab.USB_PERMISSION"
 
 class MainActivity : ComponentActivity() {
+    private val connection = DiagnosticSessionManager()
+    private val accelerator = AcceleratorRecordingState()
     private val usbManager by lazy { getSystemService(Context.USB_SERVICE) as UsbManager }
     private var permissionResult by mutableStateOf<UsbDevice?>(null)
     private var permissionMessage by mutableStateOf<String?>(null)
@@ -90,6 +95,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             OBDLabTheme {
                 ObdTerminal(
+                    connection = connection,
+                    accelerator = accelerator,
                     devices = usbManager.deviceList.values.toList(),
                     permissionDevice = permissionResult,
                     permissionMessage = permissionMessage,
@@ -114,6 +121,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         unregisterReceiver(usbPermissionReceiver)
+        connection.close()
         super.onDestroy()
     }
 }
@@ -123,6 +131,8 @@ private data class TerminalEntry(val id: Int, val kind: String, val value: Strin
 
 @Composable
 private fun ObdTerminal(
+    connection: DiagnosticSessionManager,
+    accelerator: AcceleratorRecordingState,
     devices: List<UsbDevice>,
     permissionDevice: UsbDevice?,
     permissionMessage: String?,
@@ -138,11 +148,10 @@ private fun ObdTerminal(
     var selectedUsb by remember { mutableStateOf<UsbDevice?>(null) }
     var paired by remember { mutableStateOf(emptyList<android.bluetooth.BluetoothDevice>()) }
     var btMessage by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
-    var acceleratorScreen by remember { mutableStateOf(false) }
-    var transport by remember { mutableStateOf<ObdTransport?>(null) }
-    var session by remember { mutableStateOf<ElmSession?>(null) }
-    var deviceTitle by remember { mutableStateOf("") }
+    val busy by connection.busy.collectAsState()
+    val state by connection.state.collectAsState()
+    val connected = state is DiagnosticSessionManager.State.Connected
+    var screen by remember { mutableStateOf(AppScreen.Home) }
     var commandText by remember { mutableStateOf("ATI") }
     var nextId by remember { mutableIntStateOf(0) }
     val entries = remember { mutableStateListOf<TerminalEntry>() }
@@ -171,48 +180,30 @@ private fun ObdTerminal(
     }
 
     suspend fun connect(candidate: ObdTransport, label: String, commands: List<String>) {
-        busy = true
         entries.clear()
-        deviceTitle = label
         record("status", "Connecting to " + label)
         try {
-            candidate.connect()
-            record("status", "Transport connected")
-            val opened = ElmSession(candidate)
-            transport = candidate
-            session = opened
-            for (cmd in commands) {
+            connection.connect(candidate, label, commands) { cmd, response ->
                 record("command", cmd)
-                try {
-                    record("response", opened.command(cmd).ifEmpty { "(empty response)" })
-                } catch (error: Exception) {
-                    record("error", cmd + ": " + (error.message ?: "Unknown error"))
-                    break
-                }
+                record("response", response)
             }
+            record("status", "Adapter connected")
         } catch (error: Exception) {
-            record("error", "Connection failed: " + (error.message ?: "Unknown error"))
-            runCatching { candidate.disconnect() }
-            transport = null
-            session = null
-        } finally {
-            busy = false
+            record("error", "Connection failed: " + error.message)
         }
     }
 
     fun send(cmd: String) {
-        val opened = session ?: return
-        if (busy || cmd.isBlank()) return
+        if (!connected || busy || cmd.isBlank()) return
         if (!DiagnosticCommands.isAllowed(cmd)) {
             record("error", "Command not in read-only console allowlist")
             return
         }
-        busy = true
         keyboard?.hide()
         scope.launch {
             record("command", cmd)
             try {
-                val response = opened.command(cmd)
+                val response = connection.exclusive { command(cmd) }
                 record("response", response.ifEmpty { "(empty response)" })
                 if (cmd.equals("010C", ignoreCase = true)) {
                     val rpm = EngineRpm.decode(response)
@@ -221,40 +212,19 @@ private fun ObdTerminal(
                 }
             } catch (error: Exception) {
                 record("error", cmd + ": " + (error.message ?: "Unknown error"))
-            } finally {
-                busy = false
             }
         }
     }
 
     LaunchedEffect(permissionDevice) {
         val device = permissionDevice ?: return@LaunchedEffect
-        if (device.deviceId == selectedUsb?.deviceId && session == null && !busy) {
+        if (device.deviceId == selectedUsb?.deviceId && !connected && !busy) {
             connect(createTransport(device), "USB: " + device.deviceName, listOf("ATE0", "ATI", "STI", "ATDPN"))
         }
     }
 
-    DisposableEffect(Unit) {
-        onDispose {
-            val previous = transport
-            if (previous != null) scope.launch { previous.disconnect() }
-        }
-    }
-
-    if (acceleratorScreen && session != null) {
-        AcceleratorDiagnosticsScreen(
-            session = checkNotNull(session),
-            onBack = { acceleratorScreen = false },
-            onConnectionLost = {
-                val previous = transport
-                transport = null
-                session = null
-                acceleratorScreen = false
-                record("error", "Diagnostic session interrupted; reconnect before sending commands")
-                scope.launch { runCatching { previous?.disconnect() } }
-            }
-        )
-        return
+    BackHandler(enabled = screen != AppScreen.Home && screen != AppScreen.Accelerator) {
+        if (!busy) screen = AppScreen.Home
     }
 
     Column(
@@ -262,8 +232,33 @@ private fun ObdTerminal(
             .windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        if (deviceTitle.isEmpty()) {
-            Text("OBD Lab — Devices", style = MaterialTheme.typography.headlineSmall,
+        Text("OBD Lab", style = MaterialTheme.typography.headlineSmall)
+        Text(state.description, color = MaterialTheme.colorScheme.secondary)
+        if (screen != AppScreen.Home && screen != AppScreen.Accelerator) {
+            OutlinedButton(enabled = !busy, onClick = { screen = AppScreen.Home }) { Text("Home") }
+        }
+        HorizontalDivider()
+        when (screen) {
+        AppScreen.Home -> {
+            Button(onClick = { screen = AppScreen.Connection }, modifier = Modifier.fillMaxWidth()) { Text("Connection") }
+            Button(onClick = { screen = AppScreen.Console }, modifier = Modifier.fillMaxWidth()) { Text("Diagnostic console") }
+            Button(onClick = { screen = AppScreen.Accelerator }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
+        }
+        AppScreen.Accelerator -> {
+            AcceleratorDiagnosticsScreen(
+                connection = connection,
+                recording = accelerator,
+                onBack = { screen = AppScreen.Home }
+            )
+        }
+        AppScreen.Connection -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            if (connected) {
+                Button(enabled = !busy, onClick = { scope.launch { connection.disconnect() } }) { Text("Disconnect") }
+            }
+            OutlinedButton(enabled = !busy && !connected, onClick = {
+                scope.launch { connect(SimulationTransport(), "Simulation (synthetic data)", listOf("ATE0", "ATI")) }
+            }) { Text("Connect simulator") }
+            Text("Devices", style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground)
             Text("USB adapters", style = MaterialTheme.typography.titleMedium)
             OutlinedButton(onClick = { usbDevices = refresh() }, enabled = !busy) {
@@ -271,7 +266,7 @@ private fun ObdTerminal(
             }
             if (usbDevices.isEmpty()) Text("No USB devices detected")
             usbDevices.forEach { device ->
-                OutlinedButton(enabled = !busy, onClick = {
+                OutlinedButton(enabled = !busy && !connected, onClick = {
                     selectedUsb = device
                     requestPermission(device)
                 }) {
@@ -291,33 +286,14 @@ private fun ObdTerminal(
             paired.forEach { device ->
                 @SuppressLint("MissingPermission")
                 val label = (device.name ?: "Unnamed") + " (" + device.address + ")"
-                OutlinedButton(enabled = !busy, onClick = {
+                OutlinedButton(enabled = !busy && !connected, onClick = {
                     scope.launch { connect(BluetoothObdTransport(device), "Bluetooth: " + label, listOf("ATE0", "ATI", "ATDPN")) }
                 }) { Text("Connect " + label) }
             }
-        } else {
-            Text("Diagnostic Console", style = MaterialTheme.typography.headlineSmall)
-            Text(deviceTitle, style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.onBackground)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(if (session != null) "Connected" else "Disconnected",
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.weight(1f))
-                OutlinedButton(enabled = !busy, onClick = {
-                    scope.launch {
-                        busy = true
-                        try { transport?.disconnect() }
-                        catch (error: Exception) { record("error", "Disconnect: " + error.message) }
-                        finally {
-                            transport = null
-                            session = null
-                            deviceTitle = ""
-                            busy = false
-                        }
-                    }
-                }) { Text("Back to devices") }
-            }
-            Button(enabled = session != null && !busy, onClick = { acceleratorScreen = true }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
+        }
+        AppScreen.Console -> {
+            Text("Diagnostic Console", style = MaterialTheme.typography.titleMedium)
+            if (!connected) Text("Connect an adapter or simulator to send commands.")
             HorizontalDivider()
             val listState = rememberLazyListState()
             LaunchedEffect(entries.size) {
@@ -348,7 +324,7 @@ private fun ObdTerminal(
             }, enabled = entries.isNotEmpty()) { Text("Copy log") }
             Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 DiagnosticCommands.presets.forEach { cmd ->
-                    OutlinedButton(enabled = session != null && !busy, onClick = { send(cmd) }) {
+                    OutlinedButton(enabled = connected && !busy, onClick = { send(cmd) }) {
                         Text(cmd)
                     }
                 }
@@ -363,10 +339,13 @@ private fun ObdTerminal(
                 modifier = Modifier.fillMaxWidth()
             )
             Button(
-                enabled = session != null && !busy && commandText.isNotBlank(),
+                enabled = connected && !busy && commandText.isNotBlank(),
                 onClick = { send(commandText.trim()) },
                 modifier = Modifier.align(Alignment.End)
             ) { Text(if (busy) "Working…" else "Send") }
         }
+        }
     }
 }
+
+private enum class AppScreen { Home, Connection, Console, Accelerator }

@@ -23,63 +23,71 @@ import java.util.Locale
 
 @Composable
 fun AcceleratorDiagnosticsScreen(
-    session: ElmSession,
-    onBack: () -> Unit,
-    onConnectionLost: () -> Unit
+    connection: DiagnosticSessionManager,
+    recording: AcceleratorRecordingState,
+    onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    var running by remember { mutableStateOf(false) }
-    var stopRequested by remember { mutableStateOf(false) }
-    var failed by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Parked, ignition on, engine off. Press Start.") }
-    var selected by remember { mutableStateOf(emptyList<AcceleratorPid>()) }
-    val samples = remember { mutableStateListOf<DiagnosticSample>() }
-    val transcript = remember { mutableStateListOf<String>() }
+    val state by connection.state.collectAsState()
+    val busy by connection.busy.collectAsState()
+    val connected = state is DiagnosticSessionManager.State.Connected
+    var running by recording.running
+    var stopRequested by recording.stopRequested
+    var failed by recording.failed
+    var status by recording.status
+    var selected by recording.selected
+    val samples = recording.samples
+    val transcript = recording.transcript
     fun copy(label: String, value: String) {
         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText(label, value))
     }
     fun goBack() {
         if (running) stopRequested = true
-        else if (failed) onConnectionLost() else onBack()
+        else onBack()
     }
     BackHandler { goBack() }
 
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing)
+        Modifier.fillMaxSize()
             .verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         Text("Accelerator diagnostics", style = MaterialTheme.typography.headlineSmall)
         Text(status)
+        if (!connected) Text("Offline — connect an adapter or simulator from Home / Connection.")
+        if (recording.source.value.isNotEmpty()) Text("Recording source: " + recording.source.value)
         Button(
-            enabled = !running && !failed,
+            enabled = connected && !running && !busy,
             modifier = Modifier.fillMaxWidth().height(56.dp),
             onClick = {
+                recording.source.value = state.description
+                failed = false
                 running = true
                 stopRequested = false
                 samples.clear()
                 transcript.clear()
                 selected = emptyList()
                 scope.launch {
+                    try {
+                        connection.exclusive {
                     suspend fun request(command: String): String {
-                        val response = session.command(command)
+                        val response = command(command)
                         transcript.add("$command > $response")
                         return response
                     }
-                    try {
                         status = "Discovering supported PIDs…"
                         // Reset adapter state so prior console addressing cannot leak into this run.
                         for (command in listOf("ATZ", "ATE0", "ATL0", "ATS1", "ATH0", "ATSP0")) {
-                            if (stopRequested) return@launch
+                            if (stopRequested) return@exclusive
                             val response = request(command)
                             if (command != "ATZ" && !response.lineSequence().any { it.trim() == "OK" })
                                 error("Adapter rejected $command")
                         }
                         val supported = mutableSetOf<Int>()
                         for (base in listOf(0, 0x20, 0x40)) {
-                            if (stopRequested) return@launch
+                            if (stopRequested) return@exclusive
                             val response = request("01%02X".format(Locale.ROOT, base))
                             val page = AcceleratorDiagnostics.supported(response, base)
                                 ?: error("Cannot decode PID bitmap for %02X (multiple or malformed responses)".format(base))
@@ -89,10 +97,10 @@ fun AcceleratorDiagnosticsScreen(
                         selected = AcceleratorPid.entries.filter { it.id in supported }
                         if (selected.isEmpty()) {
                             status = "No standard accelerator pedal PIDs advertised. Copy discovery log."
-                            return@launch
+                            return@exclusive
                         }
                         val start = SystemClock.elapsedRealtime()
-                        status = "Recording — slowly press and release the pedal three times."
+                        status = if (recording.source.value.contains("Simulation")) "Recording synthetic pedal movement." else "Recording — slowly press and release the pedal three times."
                         while (!stopRequested && SystemClock.elapsedRealtime() - start < 120_000 && samples.size < 2000) {
                             for (pid in selected) {
                                 if (stopRequested || samples.size >= 2000) break
@@ -103,6 +111,7 @@ fun AcceleratorDiagnosticsScreen(
                             delay(100)
                         }
                         status = "Recording finished: ${samples.size} samples."
+                        }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -142,12 +151,24 @@ fun AcceleratorDiagnosticsScreen(
             }
         }
         OutlinedButton(enabled = !running && samples.isNotEmpty(), onClick = {
-            copy("Accelerator samples CSV", AcceleratorDiagnostics.csv(samples))
+            copy("Accelerator samples CSV", AcceleratorDiagnostics.csv(samples, recording.source.value))
         }, modifier = Modifier.fillMaxWidth()) { Text("Copy CSV") }
         OutlinedButton(enabled = !running && transcript.isNotEmpty(), onClick = {
-            copy("Accelerator diagnostic log", transcript.joinToString("\n"))
+            copy("Accelerator diagnostic log", "Source: " + recording.source.value + "\n" + transcript.joinToString("\n"))
         }, modifier = Modifier.fillMaxWidth()) { Text("Copy raw log") }
         OutlinedButton(enabled = !running, onClick = { goBack() },
-            modifier = Modifier.fillMaxWidth()) { Text(if (failed) "Disconnect and return" else "Back to console") }
+            modifier = Modifier.fillMaxWidth()) { Text("Back to home") }
     }
+}
+
+/** Retained by the activity across screen navigation. */
+class AcceleratorRecordingState {
+    val running = mutableStateOf(false)
+    val stopRequested = mutableStateOf(false)
+    val failed = mutableStateOf(false)
+    val status = mutableStateOf("Parked, ignition on, engine off. Press Start.")
+    val selected = mutableStateOf(emptyList<AcceleratorPid>())
+    val source = mutableStateOf("")
+    val samples = mutableStateListOf<DiagnosticSample>()
+    val transcript = mutableStateListOf<String>()
 }

@@ -43,13 +43,14 @@ object AcceleratorDiagnostics {
     fun sample(response: String, pid: AcceleratorPid, elapsedMs: Long) =
         DiagnosticSample(elapsedMs, pid, response, payload(response, pid.id, 1)?.single())
 
-    fun csv(samples: List<DiagnosticSample>): String = buildString {
-        appendLine("elapsed_ms,pid,raw_byte_hex,value_percent,raw_response")
+    fun csv(samples: List<DiagnosticSample>, source: String? = null): String = buildString {
+        appendLine("elapsed_ms,pid,raw_byte_hex,value_percent,raw_response" + if (source != null) ",source" else "")
         for (sample in samples) {
             val raw = sample.value?.let { "%02X".format(Locale.ROOT, it) }.orEmpty()
             val percent = sample.percent?.let { "%.4f".format(Locale.ROOT, it) }.orEmpty()
             val response = sample.rawResponse.replace("\"", "\"\"")
-            appendLine("${sample.elapsedMs},${sample.pid.hex},$raw,$percent,\"$response\"")
+            val sourceColumn = source?.let { ",\"" + it.replace("\"", "\"\"") + "\"" }.orEmpty()
+            appendLine("${sample.elapsedMs},${sample.pid.hex},$raw,$percent,\"$response\"$sourceColumn")
         }
     }
 }

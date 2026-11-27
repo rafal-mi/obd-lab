@@ -25,8 +25,7 @@ import java.util.Locale
 fun AcceleratorDiagnosticsScreen(
     connection: DiagnosticSessionManager,
     recording: AcceleratorRecordingState,
-    onBack: () -> Unit,
-    onConnectionLost: () -> Unit
+    onBack: () -> Unit
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -152,7 +151,7 @@ fun AcceleratorDiagnosticsScreen(
             }
         }
         OutlinedButton(enabled = !running && samples.isNotEmpty(), onClick = {
-            copy("Accelerator samples CSV", "source," + recording.source.value + "\n" + AcceleratorDiagnostics.csv(samples))
+            copy("Accelerator samples CSV", AcceleratorDiagnostics.csv(samples, recording.source.value))
         }, modifier = Modifier.fillMaxWidth()) { Text("Copy CSV") }
         OutlinedButton(enabled = !running && transcript.isNotEmpty(), onClick = {
             copy("Accelerator diagnostic log", "Source: " + recording.source.value + "\n" + transcript.joinToString("\n"))

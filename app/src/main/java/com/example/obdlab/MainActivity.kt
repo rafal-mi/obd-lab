@@ -41,7 +41,6 @@ import androidx.compose.ui.unit.dp
 import com.example.obdlab.obd.BluetoothObdTransport
 import com.example.obdlab.obd.ObdTransport
 import com.example.obdlab.obd.EngineRpm
-import com.example.obdlab.obd.ElmSession
 import com.example.obdlab.obd.UsbObdTransport
 import com.example.obdlab.ui.theme.OBDLabTheme
 import kotlinx.coroutines.launch
@@ -249,8 +248,7 @@ private fun ObdTerminal(
             AcceleratorDiagnosticsScreen(
                 connection = connection,
                 recording = accelerator,
-                onBack = { screen = AppScreen.Home },
-                onConnectionLost = { scope.launch { connection.disconnect() } }
+                onBack = { screen = AppScreen.Home }
             )
         }
         AppScreen.Connection -> Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

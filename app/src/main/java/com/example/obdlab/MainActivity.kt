@@ -45,6 +45,15 @@ import com.example.obdlab.obd.ElmSession
 import com.example.obdlab.obd.UsbObdTransport
 import com.example.obdlab.ui.theme.OBDLabTheme
 import kotlinx.coroutines.launch
+import android.content.ClipData
+import android.content.ClipboardManager
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import com.example.obdlab.obd.DiagnosticCommands
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 private const val USB_PERMISSION_ACTION = "com.example.obdlab.USB_PERMISSION"
 
@@ -110,7 +119,7 @@ class MainActivity : ComponentActivity() {
 }
 
 
-private data class TerminalEntry(val id: Int, val kind: String, val value: String)
+private data class TerminalEntry(val id: Int, val kind: String, val value: String, val timestamp: String)
 
 @Composable
 private fun ObdTerminal(
@@ -130,6 +139,7 @@ private fun ObdTerminal(
     var paired by remember { mutableStateOf(emptyList<android.bluetooth.BluetoothDevice>()) }
     var btMessage by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
+    var acceleratorScreen by remember { mutableStateOf(false) }
     var transport by remember { mutableStateOf<ObdTransport?>(null) }
     var session by remember { mutableStateOf<ElmSession?>(null) }
     var deviceTitle by remember { mutableStateOf("") }
@@ -137,7 +147,7 @@ private fun ObdTerminal(
     var nextId by remember { mutableIntStateOf(0) }
     val entries = remember { mutableStateListOf<TerminalEntry>() }
     fun record(kind: String, value: String) {
-        entries.add(TerminalEntry(nextId++, kind, value))
+        entries.add(TerminalEntry(nextId++, kind, value, SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS", Locale.ROOT).format(Date())))
     }
 
     @SuppressLint("MissingPermission")
@@ -174,7 +184,7 @@ private fun ObdTerminal(
             for (cmd in commands) {
                 record("command", cmd)
                 try {
-                    record("response", opened.command(cmd).trim().ifEmpty { "(empty response)" })
+                    record("response", opened.command(cmd).ifEmpty { "(empty response)" })
                 } catch (error: Exception) {
                     record("error", cmd + ": " + (error.message ?: "Unknown error"))
                     break
@@ -193,12 +203,16 @@ private fun ObdTerminal(
     fun send(cmd: String) {
         val opened = session ?: return
         if (busy || cmd.isBlank()) return
+        if (!DiagnosticCommands.isAllowed(cmd)) {
+            record("error", "Command not in read-only console allowlist")
+            return
+        }
+        busy = true
         keyboard?.hide()
         scope.launch {
-            busy = true
             record("command", cmd)
             try {
-                val response = opened.command(cmd).trim()
+                val response = opened.command(cmd)
                 record("response", response.ifEmpty { "(empty response)" })
                 if (cmd.equals("010C", ignoreCase = true)) {
                     val rpm = EngineRpm.decode(response)
@@ -225,6 +239,22 @@ private fun ObdTerminal(
             val previous = transport
             if (previous != null) scope.launch { previous.disconnect() }
         }
+    }
+
+    if (acceleratorScreen && session != null) {
+        AcceleratorDiagnosticsScreen(
+            session = checkNotNull(session),
+            onBack = { acceleratorScreen = false },
+            onConnectionLost = {
+                val previous = transport
+                transport = null
+                session = null
+                acceleratorScreen = false
+                record("error", "Diagnostic session interrupted; reconnect before sending commands")
+                scope.launch { runCatching { previous?.disconnect() } }
+            }
+        )
+        return
     }
 
     Column(
@@ -266,6 +296,7 @@ private fun ObdTerminal(
                 }) { Text("Connect " + label) }
             }
         } else {
+            Text("Diagnostic Console", style = MaterialTheme.typography.headlineSmall)
             Text(deviceTitle, style = MaterialTheme.typography.titleMedium,
                 color = MaterialTheme.colorScheme.onBackground)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -286,6 +317,7 @@ private fun ObdTerminal(
                     }
                 }) { Text("Back to devices") }
             }
+            Button(enabled = session != null && !busy, onClick = { acceleratorScreen = true }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
             HorizontalDivider()
             val listState = rememberLazyListState()
             LaunchedEffect(entries.size) {
@@ -305,13 +337,17 @@ private fun ObdTerminal(
                         else -> MaterialTheme.colorScheme.onBackground
                     }
                     Column(modifier = Modifier.fillMaxWidth()) {
-                        Text(entry.kind.uppercase(), style = MaterialTheme.typography.labelSmall, color = color)
-                        Text(entry.value, color = color, style = MaterialTheme.typography.bodyMedium)
+                        Text("${entry.timestamp} ${entry.kind.uppercase()}", style = MaterialTheme.typography.labelSmall, color = color)
+                        Text(entry.value.replace("\r\n", "\n").replace('\r', '\n'), color = color, style = MaterialTheme.typography.bodyMedium, fontFamily = FontFamily.Monospace)
                     }
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("ATI", "ATDPN", "010C").forEach { cmd ->
+            OutlinedButton(onClick = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                clipboard.setPrimaryClip(ClipData.newPlainText("OBD diagnostic log", entries.joinToString("\n") { "${it.timestamp} ${it.kind}: ${it.value}" }))
+            }, enabled = entries.isNotEmpty()) { Text("Copy log") }
+            Row(modifier = Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                DiagnosticCommands.presets.forEach { cmd ->
                     OutlinedButton(enabled = session != null && !busy, onClick = { send(cmd) }) {
                         Text(cmd)
                     }

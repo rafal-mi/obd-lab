@@ -243,7 +243,9 @@ private fun ObdTerminal(
             Button(onClick = { screen = AppScreen.Connection }, modifier = Modifier.fillMaxWidth()) { Text("Connection") }
             Button(onClick = { screen = AppScreen.Console }, modifier = Modifier.fillMaxWidth()) { Text("Diagnostic console") }
             Button(onClick = { screen = AppScreen.Accelerator }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
+            Button(onClick = { screen = AppScreen.Recordings }, modifier = Modifier.fillMaxWidth()) { Text("Recorded files") }
         }
+        AppScreen.Recordings -> RecordedFilesScreen()
         AppScreen.Accelerator -> {
             AcceleratorDiagnosticsScreen(
                 connection = connection,
@@ -348,4 +350,4 @@ private fun ObdTerminal(
     }
 }
 
-private enum class AppScreen { Home, Connection, Console, Accelerator }
+private enum class AppScreen { Home, Connection, Console, Accelerator, Recordings }

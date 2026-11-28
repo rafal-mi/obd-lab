@@ -151,6 +151,7 @@ private fun ObdTerminal(
     val busy by connection.busy.collectAsState()
     val state by connection.state.collectAsState()
     val connected = state is DiagnosticSessionManager.State.Connected
+    val discovery = remember { DiscoveryState() }
     var screen by remember { mutableStateOf(AppScreen.Home) }
     var commandText by remember { mutableStateOf("ATI") }
     var nextId by remember { mutableIntStateOf(0) }
@@ -243,8 +244,10 @@ private fun ObdTerminal(
             Button(onClick = { screen = AppScreen.Connection }, modifier = Modifier.fillMaxWidth()) { Text("Connection") }
             Button(onClick = { screen = AppScreen.Console }, modifier = Modifier.fillMaxWidth()) { Text("Diagnostic console") }
             Button(onClick = { screen = AppScreen.Accelerator }, modifier = Modifier.fillMaxWidth()) { Text("Accelerator diagnostics") }
+            Button(onClick = { screen = AppScreen.Discovery }, modifier = Modifier.fillMaxWidth()) { Text("Vehicle discovery") }
             Button(onClick = { screen = AppScreen.Recordings }, modifier = Modifier.fillMaxWidth()) { Text("Recorded files") }
         }
+        AppScreen.Discovery -> VehicleDiscoveryScreen(connection, discovery)
         AppScreen.Recordings -> RecordedFilesScreen()
         AppScreen.Accelerator -> {
             AcceleratorDiagnosticsScreen(
@@ -260,6 +263,9 @@ private fun ObdTerminal(
             OutlinedButton(enabled = !busy && !connected, onClick = {
                 scope.launch { connect(SimulationTransport(), "Simulation (synthetic data)", listOf("ATE0", "ATI")) }
             }) { Text("Connect simulator") }
+            OutlinedButton(enabled = !busy && !connected, onClick = {
+                scope.launch { connect(SimulationTransport(focus2007 = true), "Simulation (Focus 2007 replay)", listOf("ATE0", "ATI")) }
+            }) { Text("Connect Focus 2007 replay") }
             Text("Devices", style = MaterialTheme.typography.headlineSmall,
                 color = MaterialTheme.colorScheme.onBackground)
             Text("USB adapters", style = MaterialTheme.typography.titleMedium)
@@ -350,4 +356,4 @@ private fun ObdTerminal(
     }
 }
 
-private enum class AppScreen { Home, Connection, Console, Accelerator, Recordings }
+private enum class AppScreen { Home, Connection, Console, Accelerator, Recordings, Discovery }

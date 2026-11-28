@@ -4,7 +4,7 @@ import java.util.Locale
 import kotlin.math.cos
 
 /** In-process synthetic ELM transport, not a real vehicle or fault diagnosis. */
-class SimulationTransport : ObdTransport {
+class SimulationTransport(private val focus2007: Boolean = false) : ObdTransport {
     private var connected = false
     private var response = byteArrayOf()
     private var step = 0
@@ -22,16 +22,16 @@ class SimulationTransport : ObdTransport {
             "ATH0" -> { headers = false; "OK" }
             "ATDP" -> "ISO 15765-4 (CAN 11/500) SIMULATED"
             "ATDPN" -> "A6"
-            "0100" -> "41 00 00 10 00 01"
-            "0120" -> "41 20 00 00 00 01"
-            "0140" -> "41 40 00 C0 00 40"
-            "0149" -> "41 49 %02X".format(Locale.ROOT, pedal)
-            "014A" -> "41 4A %02X".format(Locale.ROOT, pedal / 2)
-            "015A" -> { step++; "41 5A %02X".format(Locale.ROOT, pedal) }
+            "0100" -> if (focus2007) "41 00 98 3B 00 11" else "41 00 00 10 00 01"
+            "0120" -> if (focus2007) "41 20 A0 00 00 00" else "41 20 00 00 00 01"
+            "0140" -> if (focus2007) "NO DATA" else "41 40 00 C0 00 40"
+            "0149" -> if (focus2007) "NO DATA" else "41 49 %02X".format(Locale.ROOT, pedal)
+            "014A" -> if (focus2007) "NO DATA" else "41 4A %02X".format(Locale.ROOT, pedal / 2)
+            "015A" -> if (focus2007) "NO DATA" else { step++; "41 5A %02X".format(Locale.ROOT, pedal) }
             "010C" -> "41 0C 00 00"
-            "03" -> "43 00"
-            "07" -> "47 00"
-            "0A" -> "4A 00"
+            "03" -> if (focus2007) "NO DATA" else "43 00"
+            "07" -> if (focus2007) "NO DATA" else "47 00"
+            "0A" -> if (focus2007) "NO DATA" else "4A 00"
             else -> if (cmd.startsWith("AT")) "OK" else "NO DATA"
         }
         val payload = if (headers && cmd.matches(Regex("[0-9A-F]+")) && answer != "NO DATA")

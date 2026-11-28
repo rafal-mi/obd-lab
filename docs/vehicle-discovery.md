@@ -1,0 +1,3 @@
+# Vehicle discovery
+
+Connect the Focus 2007 replay simulator from Connection, then Home / Vehicle discovery / Discover vehicle. Expect 12 advertised identifiers including continuation 20, and no pedal PIDs. Save discovery report via Android document picker. Real vehicle: parked, ignition on, engine off, other diagnostic apps closed. Logcat tag ElmSession exposes TX/RX; PidDiscovery logs parsed pages. The replay's 7E8 and A6 are synthetic, not captured. Parser supports spaced CAN single frames with 3- or 8-digit identifiers; other formats are retained raw, not guessed. DTC responses are not decoded. Report lives in memory until explicitly exported; no automatic persistent capability database. Run ./gradlew :app:testDebugUnitTest :app:assembleDebug before merging.

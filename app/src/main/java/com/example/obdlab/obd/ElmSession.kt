@@ -1,6 +1,7 @@
 package com.example.obdlab.obd
 
 import java.io.ByteArrayOutputStream
+import android.util.Log
 
 /**
  * Serializes adapter commands and reads until the ELM/STN '>' prompt.
@@ -10,11 +11,14 @@ import java.io.ByteArrayOutputStream
  * read operation eventually returns or throws on timeout/disconnection.
  */
 class ElmSession(private val transport: ObdTransport) {
+    private fun trace(message: String) { runCatching { Log.d("ElmSession", message) } }
+
     suspend fun command(command: String, maxResponseBytes: Int = 8192): String {
         require(command.isNotBlank()) { "Command must not be blank" }
         require('\r' !in command && '\n' !in command) { "One command per call" }
         require(maxResponseBytes > 0)
 
+        trace("TX: $command")
         transport.write((command + "\r").toByteArray(Charsets.US_ASCII))
         val response = ByteArrayOutputStream()
         while (response.size() < maxResponseBytes) {
@@ -23,7 +27,7 @@ class ElmSession(private val transport: ObdTransport) {
             val promptIndex = chunk.indexOf('>'.code.toByte())
             if (promptIndex >= 0) {
                 response.write(chunk, 0, promptIndex)
-                return response.toString(Charsets.US_ASCII.name())
+                return response.toString(Charsets.US_ASCII.name()).also { trace("RX: " + it.replace("\r", "\\r").replace("\n", "\\n")) }
             }
             response.write(chunk)
         }
